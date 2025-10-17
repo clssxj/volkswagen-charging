@@ -1,0 +1,13 @@
+# robots.txt for Volkswagen Charging Map
+
+User-agent: *
+Allow: /
+
+# 允许所有搜索引擎爬取
+
+# 禁止爬取API接口
+Disallow: /api/
+
+# 网站地图
+Sitemap: https://your-domain.com/sitemap.xml
+

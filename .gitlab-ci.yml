@@ -1,0 +1,124 @@
+stages:
+  - install
+  - test
+  - build
+  - deploy
+
+# 缓存node_modules以加速构建
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+    - .npm/
+
+# 安装依赖
+install_dependencies:
+  stage: install
+  image: node:18-alpine
+  script:
+    - npm ci --cache .npm --prefer-offline
+  artifacts:
+    expire_in: 1h
+    paths:
+      - node_modules/
+
+# 运行代码检查
+lint:
+  stage: test
+  image: node:18-alpine
+  dependencies:
+    - install_dependencies
+  script:
+    - npm run lint
+  allow_failure: false
+
+# 运行单元测试
+test:
+  stage: test
+  image: node:18-alpine
+  dependencies:
+    - install_dependencies
+  script:
+    - npm run test:coverage
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+    paths:
+      - coverage/
+
+# 构建生产版本
+build:
+  stage: build
+  image: node:18-alpine
+  dependencies:
+    - install_dependencies
+  script:
+    - npm run build
+  artifacts:
+    expire_in: 1 week
+    paths:
+      - dist/
+  only:
+    - main
+    - develop
+    - tags
+
+# 部署到测试环境
+deploy_staging:
+  stage: deploy
+  image: alpine:latest
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache rsync openssh
+  script:
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - rsync -avz --delete dist/ $STAGING_SERVER:/var/www/charging-map/
+  environment:
+    name: staging
+    url: https://staging.charging-map.example.com
+  only:
+    - develop
+
+# 部署到生产环境
+deploy_production:
+  stage: deploy
+  image: alpine:latest
+  dependencies:
+    - build
+  before_script:
+    - apk add --no-cache rsync openssh
+  script:
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - rsync -avz --delete dist/ $PRODUCTION_SERVER:/var/www/charging-map/
+  environment:
+    name: production
+    url: https://charging-map.example.com
+  only:
+    - main
+    - tags
+  when: manual  # 生产环境需要手动触发
+
+# 性能测试（可选）
+performance:
+  stage: test
+  image: node:18-alpine
+  dependencies:
+    - build
+  script:
+    - npm install -g lighthouse
+    - lighthouse https://staging.charging-map.example.com --output html --output-path ./lighthouse-report.html
+  artifacts:
+    paths:
+      - lighthouse-report.html
+  only:
+    - develop
+  allow_failure: true
+
