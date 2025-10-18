@@ -2,6 +2,17 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 import { fileURLToPath, URL } from 'node:url'
+import fs from 'node:fs'
+import path from 'node:path'
+
+// 获取当前目录路径
+const __dirname = fileURLToPath(new URL('.', import.meta.url))
+
+// 读取HTTPS证书
+const httpsConfig = {
+  key: fs.readFileSync(path.resolve(__dirname, 'certs/localhost-key.pem')),
+  cert: fs.readFileSync(path.resolve(__dirname, 'certs/localhost.pem'))
+}
 
 export default defineConfig({
   plugins: [
@@ -68,7 +79,8 @@ export default defineConfig({
   },
   server: {
     port: 3000,
-    host: true,
+    host: '0.0.0.0',
+    https: httpsConfig,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',
