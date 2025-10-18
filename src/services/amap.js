@@ -50,7 +50,7 @@ class AMapService {
 
     const defaultOptions = {
       zoom: 13,
-      center: [116.397428, 39.90923], // 默认北京
+      center: [117.2272, 31.8206], // 默认合肥市
       viewMode: '3D',
       pitch: 0,
       mapStyle: 'amap://styles/normal',

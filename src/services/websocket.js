@@ -1,4 +1,4 @@
-import { generateStatusUpdate } from '@/api/mock/station-mock'
+import { generateStatusUpdate, updateStationPrices } from '@/api/mock/station-mock'
 
 class WebSocketService {
   constructor() {
@@ -183,44 +183,59 @@ class WebSocketService {
 
   // Mock模式：模拟状态更新推送
   startMockUpdates() {
-    if (this.mockInterval) {
+    if (this.mockInterval || this.priceInterval) {
       return
     }
 
-    // 每5-10秒随机推送一批状态更新
-    const pushUpdate = () => {
-      // 随机选择10-30个充电站进行状态更新
-      const updateCount = Math.floor(Math.random() * 20) + 10
-      const stationIds = []
-      
-      for (let i = 0; i < updateCount; i++) {
-        const randomId = `station_${Math.floor(Math.random() * 2000) + 1}`
-        if (!stationIds.includes(randomId)) {
-          stationIds.push(randomId)
-        }
-      }
+    console.log('启动Mock模式：充电桩状态和价格自动更新')
 
-      const updates = generateStatusUpdate(stationIds)
+    // 定时更新充电桩可用数量（每10-15分钟）
+    const pushAvailabilityUpdate = () => {
+      // 调用更新函数，返回所有有变化的充电站
+      const updates = generateStatusUpdate()
       
       if (updates.length > 0) {
+        console.log(`推送 ${updates.length} 个充电站的数量更新`)
         this.handleMessage({
           type: 'station_status_update',
           payload: { updates }
         })
       }
 
-      // 随机设置下次更新时间（5-10秒）
-      const nextDelay = Math.floor(Math.random() * 5000) + 5000
-      this.mockInterval = setTimeout(pushUpdate, nextDelay)
+      // 下次更新时间：10-15分钟
+      const nextDelay = (10 + Math.random() * 5) * 60 * 1000
+      console.log(`下次充电桩数量更新将在 ${Math.round(nextDelay / 60000)} 分钟后`)
+      this.mockInterval = setTimeout(pushAvailabilityUpdate, nextDelay)
     }
 
-    pushUpdate()
+    // 定时更新价格（每小时）
+    const pushPriceUpdate = () => {
+      updateStationPrices()
+      console.log('价格已根据时段更新')
+      
+      // 通知前端刷新价格
+      this.handleMessage({
+        type: 'price_update',
+        payload: { timestamp: Date.now() }
+      })
+      
+      // 每小时更新一次
+      this.priceInterval = setTimeout(pushPriceUpdate, 60 * 60 * 1000)
+    }
+
+    // 立即执行一次更新
+    setTimeout(pushAvailabilityUpdate, 5000) // 5秒后首次更新
+    pushPriceUpdate() // 立即更新价格
   }
 
   stopMockUpdates() {
     if (this.mockInterval) {
       clearTimeout(this.mockInterval)
       this.mockInterval = null
+    }
+    if (this.priceInterval) {
+      clearTimeout(this.priceInterval)
+      this.priceInterval = null
     }
   }
 

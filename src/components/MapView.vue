@@ -113,87 +113,40 @@ function createMarkerHTML(station) {
   const colors = getColorByAvailability(station.availableCount, station.totalCount)
   
   return `
-    <div style="
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      cursor: pointer;
-      transform: translate(-50%, -100%);
-      transition: transform 0.2s ease;
-    " class="charging-marker">
-      <!-- 信息卡片 -->
+    <div class="charging-marker" style="position: relative; width: 100px;">
       <div style="
-        background: linear-gradient(135deg, ${colors.bg} 0%, ${colors.bg}dd 100%);
-        color: ${colors.text};
-        border: 2px solid ${colors.border};
-        border-radius: 10px;
-        padding: 8px 12px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-        min-width: 100px;
+        background: ${colors.bg};
+        color: white;
+        border: 2px solid white;
+        border-radius: 8px;
+        padding: 6px 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         text-align: center;
-        font-size: 12px;
-        line-height: 1.5;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
-        white-space: nowrap;
-        backdrop-filter: blur(10px);
+        font-family: Arial, sans-serif;
       ">
-        <!-- 充电图标和价格 -->
-        <div style="
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 5px;
-          margin-bottom: 4px;
-        ">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M13 2L3 14h8l-1 8 10-12h-8l1-8z" fill="${colors.text}" stroke="${colors.text}" stroke-width="1"/>
-          </svg>
-          <span style="
-            font-weight: bold; 
-            font-size: 14px;
-            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
-          ">¥${station.pricePerKWh}/度</span>
+        <div style="font-size: 12px; font-weight: bold; margin-bottom: 3px;">
+          ⚡ ¥${station.pricePerKWh}/度
         </div>
-        
-        <!-- 分隔线 -->
-        <div style="
-          height: 1px;
-          background: ${colors.text}40;
-          margin: 4px 0;
-        "></div>
-        
-        <!-- 空闲桩数 -->
-        <div style="
-          font-weight: bold; 
-          font-size: 16px;
-          letter-spacing: 0.5px;
-        ">
-          <span style="color: ${colors.text};">${station.availableCount}</span>
-          <span style="color: ${colors.text}99; font-size: 14px;">/${station.totalCount}</span>
+        <div style="font-size: 14px; font-weight: bold;">
+          ${station.availableCount}/${station.totalCount}
         </div>
       </div>
-      
-      <!-- 三角箭头 -->
       <div style="
+        margin: -1px auto 0;
         width: 0;
         height: 0;
-        border-left: 8px solid transparent;
-        border-right: 8px solid transparent;
-        border-top: 10px solid ${colors.border};
-        margin-top: -2px;
-        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.2));
+        border-left: 6px solid transparent;
+        border-right: 6px solid transparent;
+        border-top: 8px solid white;
       "></div>
-      
-      <!-- 定位点 -->
       <div style="
-        width: 10px;
-        height: 10px;
+        margin: -1px auto 0;
+        width: 8px;
+        height: 8px;
         background: ${colors.bg};
-        border: 3px solid white;
+        border: 2px solid white;
         border-radius: 50%;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-        margin-top: -1px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
       "></div>
     </div>
   `
@@ -209,8 +162,8 @@ async function initMap() {
     
     // 创建地图
     map.value = await amapService.createMap(mapContainer.value, {
-      zoom: 13,
-      center: [116.397428, 39.90923], // 默认北京
+      zoom: 12,
+      center: [117.2272, 31.8206], // 默认合肥市
       mapStyle: isDarkMode.value ? 'amap://styles/dark' : 'amap://styles/normal'
     })
 
@@ -221,18 +174,22 @@ async function initMap() {
 
     // 地图事件监听
     map.value.on('moveend', handleMapMove)
-    map.value.on('zoomend', handleMapMove)
+    map.value.on('zoomend', () => {
+      handleMapMove()
+      // 缩放时重新渲染标记（切换聚合/非聚合模式）
+      updateMarkers()
+    })
     
     // 尝试定位（失败不影响后续流程）
     try {
       await handleLocation(false)
     } catch (error) {
       console.warn('定位失败，使用默认位置:', error)
-      // 使用默认位置（北京）
+      // 使用默认位置（合肥市）
       stationStore.setUserLocation({
-        lat: 39.90923,
-        lng: 116.397428,
-        address: '北京市'
+        lat: 31.8206,
+        lng: 117.2272,
+        address: '合肥市'
       })
     }
     
@@ -309,62 +266,262 @@ function updateMarkers() {
   const stations = stationStore.stations
 
   try {
-    // 创建标记聚合器
-    if (!markerClusterer.value) {
-      markerClusterer.value = new AMap.value.MarkerClusterer(map.value, [], {
-        gridSize: 60,
-        minClusterSize: 3,
-        renderClusterMarker: renderCluster,
-        zoomOnClick: true
-      })
-    }
-
     // 创建标记
     markers.value = stations.map(station => {
+      // 创建标记DOM元素
+      const markerContent = document.createElement('div')
+      markerContent.innerHTML = createMarkerHTML(station)
+      
       const marker = new AMap.value.Marker({
         position: [station.lng, station.lat],
-        content: createMarkerHTML(station),
-        offset: new AMap.value.Pixel(0, 0),
+        content: markerContent,
+        anchor: 'bottom-center',
         extData: { station },
         zIndex: 100
       })
 
+      // 点击标记显示信息窗和触发事件
       marker.on('click', () => {
+        showInfoWindow(marker, station)
         emit('markerClick', station)
       })
 
       return marker
     })
+    
+    console.log(`已创建 ${markers.value.length} 个标记对象`)
 
-    if (markerClusterer.value && typeof markerClusterer.value.setMarkers === 'function') {
-      markerClusterer.value.setMarkers(markers.value)
-      console.log(`已加载 ${markers.value.length} 个充电站标记`)
+    // 根据当前地图缩放级别决定是否使用聚合
+    const zoom = map.value.getZoom()
+    // 临时禁用聚合，直接显示所有标记
+    const shouldCluster = false // zoom < 14 && markers.value.length > 200
+
+    if (shouldCluster) {
+      // 使用聚合模式
+      console.log(`使用聚合模式显示 ${markers.value.length} 个充电站`)
+      
+      // 创建或更新标记聚合器
+      if (!markerClusterer.value) {
+        markerClusterer.value = new AMap.value.MarkerClusterer(map.value, [], {
+          gridSize: 80,
+          minClusterSize: 5,
+          maxZoom: 14,
+          renderClusterMarker: renderCluster,
+          zoomOnClick: true
+        })
+      }
+      
+      // 设置标记到聚合器
+      if (markerClusterer.value && typeof markerClusterer.value.setMarkers === 'function') {
+        markerClusterer.value.setMarkers(markers.value)
+      }
+      
+      console.log(`已加载 ${markers.value.length} 个充电站标记（聚合模式）`)
+    } else {
+      // 不使用聚合，直接添加到地图
+      console.log(`直接显示 ${markers.value.length} 个充电站标记`)
+      
+      // 如果之前使用了聚合器，清除它
+      if (markerClusterer.value && typeof markerClusterer.value.clearMarkers === 'function') {
+        try {
+          markerClusterer.value.clearMarkers()
+        } catch (e) {
+          console.warn('清除聚合器失败:', e)
+        }
+      }
+      
+      // 直接添加标记到地图
+      let successCount = 0
+      markers.value.forEach((marker, index) => {
+        if (marker && typeof marker.setMap === 'function') {
+          marker.setMap(map.value)
+          successCount++
+          
+          // 记录前5个标记的位置用于调试
+          if (index < 5) {
+            console.log(`标记${index + 1}位置:`, marker.getPosition())
+          }
+        }
+      })
+      
+      console.log(`已加载 ${successCount}/${markers.value.length} 个充电站标记（直接显示）`)
+      
+      // 验证地图上的标记
+      const mapMarkers = map.value.getAllOverlays('marker')
+      console.log(`地图上实际标记数量:`, mapMarkers ? mapMarkers.length : 0)
     }
   } catch (error) {
     console.error('更新标记失败:', error)
+    
+    // 降级方案：即使出错也尝试直接显示标记
+    try {
+      markers.value.forEach(marker => {
+        if (marker && typeof marker.setMap === 'function') {
+          marker.setMap(map.value)
+        }
+      })
+      console.log('使用降级方案显示标记')
+    } catch (fallbackError) {
+      console.error('降级方案也失败:', fallbackError)
+    }
   }
 }
 
 // 渲染聚合标记
 function renderCluster(context) {
   const count = context.count
+  const markers = context.markers
+  
+  // 计算聚合内充电站的平均空闲率
+  let totalAvailable = 0
+  let totalCount = 0
+  
+  markers.forEach(marker => {
+    const station = marker.getExtData().station
+    if (station) {
+      totalAvailable += station.availableCount || 0
+      totalCount += station.totalCount || 0
+    }
+  })
+  
+  const avgRate = totalCount > 0 ? totalAvailable / totalCount : 0
+  
+  // 根据平均空闲率选择颜色
+  let bgColor, borderColor
+  if (avgRate >= 0.5) {
+    bgColor = 'rgba(16, 185, 129, 0.95)'
+    borderColor = '#10b981'
+  } else if (avgRate >= 0.2) {
+    bgColor = 'rgba(245, 158, 11, 0.95)'
+    borderColor = '#f59e0b'
+  } else {
+    bgColor = 'rgba(239, 68, 68, 0.95)'
+    borderColor = '#ef4444'
+  }
+  
+  // 根据数量调整大小
+  let size = 50
+  if (count > 100) {
+    size = 70
+  } else if (count > 50) {
+    size = 60
+  }
+  
   const div = document.createElement('div')
   div.style.cssText = `
-    background-color: rgba(0, 30, 80, 0.9);
+    background: ${bgColor};
     color: white;
-    border: 2px solid white;
+    border: 3px solid ${borderColor};
     border-radius: 50%;
-    width: 40px;
-    height: 40px;
+    width: ${size}px;
+    height: ${size}px;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     font-weight: bold;
-    font-size: 14px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    font-size: ${size > 60 ? '18px' : '16px'};
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    cursor: pointer;
+    transition: transform 0.2s ease;
   `
-  div.textContent = count
+  
+  div.innerHTML = `
+    <div style="font-size: ${size > 60 ? '24px' : '20px'}; line-height: 1;">${count}</div>
+    <div style="font-size: 10px; opacity: 0.9; margin-top: 2px;">充电站</div>
+  `
+  
+  // 添加hover效果
+  div.addEventListener('mouseenter', () => {
+    div.style.transform = 'scale(1.1)'
+  })
+  div.addEventListener('mouseleave', () => {
+    div.style.transform = 'scale(1)'
+  })
+  
   context.marker.setContent(div)
+}
+
+// 显示信息窗
+function showInfoWindow(marker, station) {
+  if (!AMap.value || !map.value) return
+
+  const colors = getColorByAvailability(station.availableCount, station.totalCount)
+  
+  const content = `
+    <div style="
+      min-width: 200px;
+      padding: 12px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    ">
+      <h3 style="
+        margin: 0 0 8px 0;
+        font-size: 16px;
+        font-weight: bold;
+        color: #1f2937;
+      ">${station.name}</h3>
+      
+      <div style="
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+      ">
+        <span style="
+          background: ${colors.bg};
+          color: white;
+          padding: 4px 10px;
+          border-radius: 12px;
+          font-size: 12px;
+          font-weight: bold;
+        ">
+          空闲 ${station.availableCount}/${station.totalCount}
+        </span>
+        <span style="
+          color: #6b7280;
+          font-size: 13px;
+        ">¥${station.pricePerKWh}/度</span>
+      </div>
+      
+      <p style="
+        margin: 0;
+        color: #6b7280;
+        font-size: 13px;
+        line-height: 1.5;
+      ">${station.address}</p>
+      
+      <button style="
+        width: 100%;
+        margin-top: 12px;
+        padding: 8px;
+        background: #001e50;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+      " onclick="window.viewStationDetail('${station.id}')">
+        查看详情
+      </button>
+    </div>
+  `
+
+  const infoWindow = new AMap.value.InfoWindow({
+    content,
+    offset: new AMap.value.Pixel(0, -40),
+    closeWhenClickMap: true
+  })
+
+  infoWindow.open(map.value, marker.getPosition())
+}
+
+// 全局方法：查看充电站详情
+window.viewStationDetail = (stationId) => {
+  const station = stationStore.stations.find(s => s.id === stationId)
+  if (station) {
+    emit('markerClick', station)
+  }
 }
 
 // 清除标记
@@ -374,8 +531,8 @@ function clearMarkers() {
   }
   if (markers.value && markers.value.length > 0) {
     markers.value.forEach(marker => {
-      if (marker && typeof marker.remove === 'function') {
-        marker.remove()
+      if (marker && map.value && typeof marker.setMap === 'function') {
+        marker.setMap(null)
       }
     })
   }
@@ -425,7 +582,7 @@ async function handleLocation(showToast = true) {
     
     if (map.value) {
       map.value.setCenter([position.lng, position.lat])
-      map.value.setZoom(15)
+      map.value.setZoom(13)
       
       // 添加用户位置标记
       if (!userMarker.value) {
@@ -443,6 +600,9 @@ async function handleLocation(showToast = true) {
       } else {
         userMarker.value.setCenter([position.lng, position.lat])
       }
+      
+      // 定位成功后，加载该位置周围的充电站
+      await loadStations()
     }
     
     if (showToast) {
@@ -454,11 +614,11 @@ async function handleLocation(showToast = true) {
       appStore.showToast('定位失败，使用默认位置', 'warning')
     }
     
-    // 设置默认位置（北京天安门）
+    // 设置默认位置（合肥市中心）
     const defaultPosition = {
-      lat: 39.90923,
-      lng: 116.397428,
-      address: '北京市'
+      lat: 31.8206,
+      lng: 117.2272,
+      address: '合肥市'
     }
     
     stationStore.setUserLocation(defaultPosition)
@@ -591,22 +751,28 @@ defineExpose({
 
 <style>
 /* 充电站标记交互效果（全局样式） */
+.charging-marker {
+  transition: all 0.2s ease;
+  transform-origin: bottom center;
+}
+
 .charging-marker:hover {
-  transform: translate(-50%, -100%) scale(1.08) !important;
+  transform: scale(1.1);
+  filter: brightness(1.1);
   z-index: 1000 !important;
 }
 
 .charging-marker:active {
-  transform: translate(-50%, -100%) scale(0.98) !important;
+  transform: scale(0.95);
 }
 
 /* 标记动画 */
 @keyframes markerPulse {
   0%, 100% {
-    transform: translate(-50%, -100%) scale(1);
+    transform: scale(1);
   }
   50% {
-    transform: translate(-50%, -100%) scale(1.05);
+    transform: scale(1.08);
   }
 }
 

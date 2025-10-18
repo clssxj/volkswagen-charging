@@ -302,11 +302,18 @@ function initWebSocket() {
     appStore.showToast('实时更新连接失败，将使用轮询模式', 'warning')
   })
 
-  // 订阅状态更新
+  // 订阅状态更新（充电桩可用数量变化）
   wsService.on('station_status_update', (payload) => {
     if (payload.updates) {
       stationStore.updateStationStatus(payload.updates)
     }
+  })
+
+  // 订阅价格更新（每小时根据时段变化）
+  wsService.on('price_update', () => {
+    console.log('价格已更新，重新加载充电站数据')
+    // 重新获取充电站数据（价格已在后端更新）
+    loadStations()
   })
 }
 

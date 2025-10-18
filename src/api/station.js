@@ -11,11 +11,12 @@ export const stationApi = {
     if (USE_MOCK) {
       return new Promise((resolve) => {
         setTimeout(() => {
+          // 使用固定的合肥市2000个充电站数据
           let stations = mockStationData.stations
           
-          // 如果有边界参数，进行过滤
+          // 如果有边界参数，进行过滤（不重新生成）
           if (params.minLat && params.maxLat && params.minLng && params.maxLng) {
-            stations = stations.filter(station => 
+            stations = mockStationData.stations.filter(station => 
               station.lat >= params.minLat &&
               station.lat <= params.maxLat &&
               station.lng >= params.minLng &&
@@ -23,8 +24,9 @@ export const stationApi = {
             )
           }
           
+          console.log(`返回 ${stations.length} 个充电站数据（边界过滤）`)
           resolve(stations)
-        }, 300)
+        }, 200) // 减少延迟
       })
     }
     
@@ -36,6 +38,7 @@ export const stationApi = {
     if (USE_MOCK) {
       return new Promise((resolve, reject) => {
         setTimeout(() => {
+          // 从固定数据中查找
           const station = mockStationData.stations.find(s => s.id === id)
           if (station) {
             // 生成详细的充电桩信息
