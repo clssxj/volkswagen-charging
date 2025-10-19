@@ -50,6 +50,7 @@ import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { useStationStore } from '@/stores/station'
 import { useAppStore } from '@/stores/app'
 import amapService from '@/services/amap'
+import { ManualCluster } from '@/utils/manual-cluster'
 
 const emit = defineEmits(['mapReady', 'markerClick', 'boundsChanged'])
 
@@ -60,10 +61,12 @@ const mapContainer = ref(null)
 const map = ref(null)
 const markers = ref([])
 const markerClusterer = ref(null)
+const manualCluster = ref(null) // 手动聚合器
 const userMarker = ref(null)
 const userMarkerStyle = ref({})
 const locating = ref(false)
 const AMap = ref(null)
+const routeLine = ref(null) // 路线折线对象
 
 const isDarkMode = computed(() => appStore.isDarkMode)
 
@@ -108,97 +111,79 @@ function getColorByAvailability(availableCount, totalCount) {
   }
 }
 
-// 创建自定义标记HTML
-function createMarkerHTML(station) {
-  const colors = getColorByAvailability(station.availableCount, station.totalCount)
-  
-  return `
-    <div class="charging-marker" style="position: relative; width: 100px;">
-      <div style="
-        background: ${colors.bg};
-        color: white;
-        border: 2px solid white;
-        border-radius: 8px;
-        padding: 6px 10px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        text-align: center;
-        font-family: Arial, sans-serif;
-      ">
-        <div style="font-size: 12px; font-weight: bold; margin-bottom: 3px;">
-          ⚡ ¥${station.pricePerKWh}/度
-        </div>
-        <div style="font-size: 14px; font-weight: bold;">
-          ${station.availableCount}/${station.totalCount}
-        </div>
-      </div>
-      <div style="
-        margin: -1px auto 0;
-        width: 0;
-        height: 0;
-        border-left: 6px solid transparent;
-        border-right: 6px solid transparent;
-        border-top: 8px solid white;
-      "></div>
-      <div style="
-        margin: -1px auto 0;
-        width: 8px;
-        height: 8px;
-        background: ${colors.bg};
-        border: 2px solid white;
-        border-radius: 50%;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-      "></div>
-    </div>
-  `
-}
-
 // 初始化地图
 async function initMap() {
   try {
+    console.log('🚀 开始初始化地图...')
     appStore.setLoading(true)
     
-    // 加载高德地图
+    // 1. 加载高德地图SDK
+    console.time('1-加载SDK')
     AMap.value = await amapService.load()
+    console.timeEnd('1-加载SDK')
     
-    // 创建地图
-    map.value = await amapService.createMap(mapContainer.value, {
-      zoom: 12,
-      center: [117.2272, 31.8206], // 默认合肥市
-      mapStyle: isDarkMode.value ? 'amap://styles/dark' : 'amap://styles/normal'
-    })
-
-    // 等待地图完全加载
-    await new Promise(resolve => {
-      map.value.on('complete', resolve)
-    })
-
-    // 地图事件监听
-    map.value.on('moveend', handleMapMove)
-    map.value.on('zoomend', () => {
-      handleMapMove()
-      // 缩放时重新渲染标记（切换聚合/非聚合模式）
-      updateMarkers()
-    })
-    
-    // 尝试定位（失败不影响后续流程）
+    // 2. 先定位（优先，确定用户位置）
+    console.time('2-定位')
+    let userPosition = null
     try {
-      await handleLocation(false)
+      userPosition = await amapService.getCurrentPosition()
+      console.timeEnd('2-定位')
+      console.log('✅ 定位成功:', userPosition)
+      stationStore.setUserLocation(userPosition)
     } catch (error) {
-      console.warn('定位失败，使用默认位置:', error)
-      // 使用默认位置（合肥市）
-      stationStore.setUserLocation({
+      console.timeEnd('2-定位')
+      console.warn('⚠️ 定位失败，使用默认位置')
+      userPosition = {
         lat: 31.8206,
         lng: 117.2272,
         address: '合肥市'
-      })
+      }
+      stationStore.setUserLocation(userPosition)
     }
     
-    // 加载充电站数据
-    await loadStations()
+    // 3. 创建地图，直接使用定位后的位置作为中心
+    console.time('3-创建地图')
+    map.value = await amapService.createMap(mapContainer.value, {
+      zoom: 14, // 使用更大的缩放级别
+      center: [userPosition.lng, userPosition.lat], // 使用定位位置
+      mapStyle: isDarkMode.value ? 'amap://styles/dark' : 'amap://styles/normal'
+    })
+    console.timeEnd('3-创建地图')
 
+    // 4. 添加用户位置标记
+    if (userPosition) {
+      const marker = new AMap.value.CircleMarker({
+        center: [userPosition.lng, userPosition.lat],
+        radius: 10,
+        fillColor: '#4299e1',
+        fillOpacity: 0.8,
+        strokeColor: '#fff',
+        strokeWeight: 2,
+        zIndex: 999
+      })
+      map.value.add(marker)
+      userMarker.value = marker
+    }
+
+    // 5. 地图事件监听
+    map.value.on('moveend', handleMapMove)
+    map.value.on('zoomend', () => {
+      handleMapMove()
+      updateMarkers()
+    })
+    
+    // 6. 现在才加载充电站（此时地图已经在定位位置，只会加载视野内的充电站）
+    console.time('4-加载充电站')
+    await loadStations()
+    console.timeEnd('4-加载充电站')
+
+    console.log('✅ 地图初始化完成')
+    console.log(`📍 当前位置: [${userPosition.lng}, ${userPosition.lat}]`)
+    console.log(`📊 已加载充电站数量: ${stationStore.stations.length}`)
+    
     emit('mapReady', map.value)
   } catch (error) {
-    console.error('初始化地图失败:', error)
+    console.error('❌ 初始化地图失败:', error)
     appStore.showToast('地图加载失败，请刷新重试', 'error')
   } finally {
     appStore.setLoading(false)
@@ -268,16 +253,56 @@ function updateMarkers() {
   try {
     // 创建标记
     markers.value = stations.map(station => {
-      // 创建标记DOM元素
-      const markerContent = document.createElement('div')
-      markerContent.innerHTML = createMarkerHTML(station)
+      const colors = getColorByAvailability(station.availableCount, station.totalCount)
+      
+      // 创建简单的标记DOM
+      const markerDiv = document.createElement('div')
+      markerDiv.className = 'charging-marker'
+      markerDiv.style.cssText = `
+        position: absolute;
+        transform: translate(-50%, -100%);
+      `
+      markerDiv.innerHTML = `
+        <div style="
+          background: ${colors.bg};
+          color: white;
+          border: 2px solid white;
+          border-radius: 8px;
+          padding: 6px 10px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+          text-align: center;
+          min-width: 90px;
+        ">
+          <div style="font-size: 12px; font-weight: bold; margin-bottom: 2px;">
+            ⚡ ¥${station.pricePerKWh}/度
+          </div>
+          <div style="font-size: 14px; font-weight: bold;">
+            ${station.availableCount}/${station.totalCount}
+          </div>
+        </div>
+        <div style="
+          width: 0;
+          height: 0;
+          border-left: 6px solid transparent;
+          border-right: 6px solid transparent;
+          border-top: 8px solid white;
+          margin: -1px auto 0;
+        "></div>
+        <div style="
+          width: 8px;
+          height: 8px;
+          background: ${colors.bg};
+          border: 2px solid white;
+          border-radius: 50%;
+          margin: -1px auto 0;
+        "></div>
+      `
       
       const marker = new AMap.value.Marker({
         position: [station.lng, station.lat],
-        content: markerContent,
-        anchor: 'bottom-center',
-        extData: { station },
-        zIndex: 100
+        content: markerDiv,
+        offset: new AMap.value.Pixel(0, 0),
+        extData: { station }
       })
 
       // 点击标记显示信息窗和触发事件
@@ -293,41 +318,49 @@ function updateMarkers() {
 
     // 根据当前地图缩放级别决定是否使用聚合
     const zoom = map.value.getZoom()
-    // 临时禁用聚合，直接显示所有标记
-    const shouldCluster = false // zoom < 14 && markers.value.length > 200
+    
+    // 聚合策略：远距离聚合，近距离直接显示
+    // Zoom < 13：始终聚合
+    // Zoom 13-15：视野内点数>50时聚合
+    // Zoom > 15：始终直接显示
+    let shouldCluster = false
+    
+    if (zoom < 13) {
+      shouldCluster = true
+    } else if (zoom >= 13 && zoom <= 15 && markers.value.length > 50) {
+      shouldCluster = true
+    }
+    
+    console.log(`当前缩放: ${zoom}, 标记数: ${markers.value.length}, 使用聚合: ${shouldCluster}`)
 
     if (shouldCluster) {
-      // 使用聚合模式
-      console.log(`使用聚合模式显示 ${markers.value.length} 个充电站`)
+      // 使用手动聚合模式
+      console.log(`✓ 使用手动聚合显示 ${markers.value.length} 个充电站`)
       
-      // 创建或更新标记聚合器
-      if (!markerClusterer.value) {
-        markerClusterer.value = new AMap.value.MarkerClusterer(map.value, [], {
-          gridSize: 80,
-          minClusterSize: 5,
-          maxZoom: 14,
-          renderClusterMarker: renderCluster,
-          zoomOnClick: true
-        })
+      // 清除旧的手动聚合
+      if (manualCluster.value) {
+        manualCluster.value.destroy()
       }
       
-      // 设置标记到聚合器
-      if (markerClusterer.value && typeof markerClusterer.value.setMarkers === 'function') {
-        markerClusterer.value.setMarkers(markers.value)
-      }
+      // 创建手动聚合器
+      manualCluster.value = new ManualCluster(map.value, {
+        gridSize: 80,
+        minClusterSize: 3,
+        maxZoom: 15
+      })
       
-      console.log(`已加载 ${markers.value.length} 个充电站标记（聚合模式）`)
+      // 设置标记并执行聚合
+      manualCluster.value.setMarkers(markers.value)
+      
+      console.log(`✓ 手动聚合器创建成功，网格大小: 80px`)
     } else {
       // 不使用聚合，直接添加到地图
-      console.log(`直接显示 ${markers.value.length} 个充电站标记`)
+      console.log(`✓ 直接显示 ${markers.value.length} 个充电站标记`)
       
-      // 如果之前使用了聚合器，清除它
-      if (markerClusterer.value && typeof markerClusterer.value.clearMarkers === 'function') {
-        try {
-          markerClusterer.value.clearMarkers()
-        } catch (e) {
-          console.warn('清除聚合器失败:', e)
-        }
+      // 销毁手动聚合器
+      if (manualCluster.value) {
+        manualCluster.value.destroy()
+        manualCluster.value = null
       }
       
       // 直接添加标记到地图
@@ -370,33 +403,41 @@ function updateMarkers() {
 // 渲染聚合标记
 function renderCluster(context) {
   const count = context.count
-  const markers = context.markers
+  const markers = context.markers || []
+  
+  console.log(`[聚合渲染] 开始渲染聚合标记，包含 ${count} 个充电站`)
   
   // 计算聚合内充电站的平均空闲率
   let totalAvailable = 0
   let totalCount = 0
   
   markers.forEach(marker => {
-    const station = marker.getExtData().station
-    if (station) {
-      totalAvailable += station.availableCount || 0
-      totalCount += station.totalCount || 0
+    try {
+      const station = marker.getExtData()?.station
+      if (station) {
+        totalAvailable += station.availableCount || 0
+        totalCount += station.totalCount || 0
+      }
+    } catch (e) {
+      console.warn('获取标记数据失败:', e)
     }
   })
   
-  const avgRate = totalCount > 0 ? totalAvailable / totalCount : 0
+  const avgRate = totalCount > 0 ? totalAvailable / totalCount : 0.5
+  
+  console.log(`[聚合渲染] 平均空闲率: ${(avgRate * 100).toFixed(1)}%`)
   
   // 根据平均空闲率选择颜色
   let bgColor, borderColor
   if (avgRate >= 0.5) {
-    bgColor = 'rgba(16, 185, 129, 0.95)'
-    borderColor = '#10b981'
+    bgColor = '#10b981' // 绿色
+    borderColor = '#059669'
   } else if (avgRate >= 0.2) {
-    bgColor = 'rgba(245, 158, 11, 0.95)'
-    borderColor = '#f59e0b'
+    bgColor = '#f59e0b' // 黄色
+    borderColor = '#d97706'
   } else {
-    bgColor = 'rgba(239, 68, 68, 0.95)'
-    borderColor = '#ef4444'
+    bgColor = '#ef4444' // 红色
+    borderColor = '#dc2626'
   }
   
   // 根据数量调整大小
@@ -405,13 +446,17 @@ function renderCluster(context) {
     size = 70
   } else if (count > 50) {
     size = 60
+  } else if (count > 20) {
+    size = 55
   }
   
+  // 创建聚合标记DOM
   const div = document.createElement('div')
+  div.className = 'cluster-marker'
   div.style.cssText = `
     background: ${bgColor};
     color: white;
-    border: 3px solid ${borderColor};
+    border: 3px solid white;
     border-radius: 50%;
     width: ${size}px;
     height: ${size}px;
@@ -420,26 +465,33 @@ function renderCluster(context) {
     align-items: center;
     justify-content: center;
     font-weight: bold;
-    font-size: ${size > 60 ? '18px' : '16px'};
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4), 0 0 0 4px ${borderColor}40;
     cursor: pointer;
-    transition: transform 0.2s ease;
+    transition: all 0.2s ease;
+    font-family: Arial, sans-serif;
+    position: relative;
+    transform: translate(-50%, -50%);
   `
   
   div.innerHTML = `
-    <div style="font-size: ${size > 60 ? '24px' : '20px'}; line-height: 1;">${count}</div>
-    <div style="font-size: 10px; opacity: 0.9; margin-top: 2px;">充电站</div>
+    <div style="font-size: ${size > 60 ? '22px' : '18px'}; line-height: 1; margin-bottom: 2px;">${count}</div>
+    <div style="font-size: ${size > 60 ? '11px' : '9px'}; opacity: 0.95;">充电站</div>
   `
   
   // 添加hover效果
   div.addEventListener('mouseenter', () => {
-    div.style.transform = 'scale(1.1)'
+    div.style.transform = 'translate(-50%, -50%) scale(1.15)'
+    div.style.boxShadow = `0 6px 16px rgba(0,0,0,0.5), 0 0 0 6px ${borderColor}60`
   })
   div.addEventListener('mouseleave', () => {
-    div.style.transform = 'scale(1)'
+    div.style.transform = 'translate(-50%, -50%) scale(1)'
+    div.style.boxShadow = `0 4px 12px rgba(0,0,0,0.4), 0 0 0 4px ${borderColor}40`
   })
   
+  // 设置到context.marker
   context.marker.setContent(div)
+  
+  console.log(`[聚合渲染] ✓ 聚合标记渲染完成: ${count}个充电站, 颜色: ${bgColor}`)
 }
 
 // 显示信息窗
@@ -580,54 +632,26 @@ async function handleLocation(showToast = true) {
     
     stationStore.setUserLocation(position)
     
-    if (map.value) {
+    // 更新用户位置标记
+    if (map.value && userMarker.value) {
+      userMarker.value.setCenter([position.lng, position.lat])
       map.value.setCenter([position.lng, position.lat])
-      map.value.setZoom(13)
+      map.value.setZoom(14)
       
-      // 添加用户位置标记
-      if (!userMarker.value) {
-        const marker = new AMap.value.CircleMarker({
-          center: [position.lng, position.lat],
-          radius: 10,
-          fillColor: '#4299e1',
-          fillOpacity: 0.8,
-          strokeColor: '#fff',
-          strokeWeight: 2,
-          zIndex: 999
-        })
-        map.value.add(marker)
-        userMarker.value = marker
-      } else {
-        userMarker.value.setCenter([position.lng, position.lat])
-      }
-      
-      // 定位成功后，加载该位置周围的充电站
+      // 重新加载该位置周围的充电站
       await loadStations()
     }
     
     if (showToast) {
       appStore.showToast('定位成功', 'success')
     }
+    
+    return position
   } catch (error) {
     console.error('定位失败:', error)
     if (showToast) {
       appStore.showToast('定位失败，使用默认位置', 'warning')
     }
-    
-    // 设置默认位置（合肥市中心）
-    const defaultPosition = {
-      lat: 31.8206,
-      lng: 117.2272,
-      address: '合肥市'
-    }
-    
-    stationStore.setUserLocation(defaultPosition)
-    
-    if (map.value) {
-      map.value.setCenter([defaultPosition.lng, defaultPosition.lat])
-    }
-    
-    // 即使定位失败也抛出错误，让调用者知道
     throw error
   } finally {
     locating.value = false
@@ -675,6 +699,10 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearMarkers()
+  clearRoute()
+  if (manualCluster.value) {
+    manualCluster.value.destroy()
+  }
   if (map.value) {
     map.value.destroy()
   }
@@ -683,6 +711,48 @@ onUnmounted(() => {
 
 function handleThemeChange(e) {
   amapService.setMapStyle(e.detail.isDark)
+}
+
+// 绘制路线
+function drawRoute(routeData) {
+  if (!map.value || !AMap.value || !routeData) return
+  
+  // 清除旧路线
+  clearRoute()
+  
+  try {
+    // 转换路径格式
+    const path = routeData.path.map(point => [point.lng, point.lat])
+    
+    // 创建路线折线
+    routeLine.value = new AMap.value.Polyline({
+      path: path,
+      strokeColor: '#4299e1', // 蓝色
+      strokeWeight: 6,
+      strokeOpacity: 0.9,
+      lineJoin: 'round',
+      lineCap: 'round',
+      zIndex: 100,
+      showDir: true // 显示方向箭头
+    })
+    
+    map.value.add(routeLine.value)
+    
+    // 调整视野以适应路线
+    map.value.setFitView([routeLine.value], false, [50, 50, 50, 50])
+    
+    console.log('路线绘制成功')
+  } catch (error) {
+    console.error('绘制路线失败:', error)
+  }
+}
+
+// 清除路线
+function clearRoute() {
+  if (routeLine.value && map.value) {
+    map.value.remove(routeLine.value)
+    routeLine.value = null
+  }
 }
 
 // 暴露方法给父组件
@@ -697,7 +767,9 @@ defineExpose({
     if (map.value) {
       map.value.setZoom(zoom)
     }
-  }
+  },
+  drawRoute,
+  clearRoute
 })
 </script>
 
@@ -751,33 +823,19 @@ defineExpose({
 
 <style>
 /* 充电站标记交互效果（全局样式） */
-.charging-marker {
-  transition: all 0.2s ease;
-  transform-origin: bottom center;
+.charging-marker:hover > div:first-child {
+  filter: brightness(1.15);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
 
-.charging-marker:hover {
-  transform: scale(1.1);
-  filter: brightness(1.1);
-  z-index: 1000 !important;
+.charging-marker:active > div:first-child {
+  filter: brightness(0.95);
 }
 
-.charging-marker:active {
-  transform: scale(0.95);
-}
-
-/* 标记动画 */
-@keyframes markerPulse {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.08);
-  }
-}
-
-.charging-marker.new-update {
-  animation: markerPulse 0.6s ease-in-out;
+/* 聚合标记样式 */
+.cluster-marker {
+  user-select: none;
+  cursor: pointer;
 }
 
 /* 优化地图上文字的渲染 */

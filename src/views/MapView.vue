@@ -119,6 +119,7 @@
       @close="handleDrawerClose"
       @navigate="handleNavigate"
       @charge="handleCharge"
+      @routePlanned="handleRoutePlanned"
     />
 
     <!-- WebSocket连接状态指示器 -->
@@ -270,9 +271,18 @@ function handleDrawerClose() {
   }, 300)
 }
 
-function handleNavigate(station) {
-  console.log('导航到:', station.name)
+function handleNavigate(data) {
+  console.log('导航到:', data.station?.name)
   // 导航逻辑已在StationDrawer组件中处理
+  // 高德地图APP已被唤起
+}
+
+function handleRoutePlanned(route) {
+  console.log('路线规划完成:', route)
+  // 在地图上绘制路线
+  if (mapRef.value && route) {
+    mapRef.value.drawRoute(route)
+  }
 }
 
 function handleCharge(data) {

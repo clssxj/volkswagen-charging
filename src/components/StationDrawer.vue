@@ -173,6 +173,16 @@
       </div>
     </div>
   </transition>
+
+  <!-- 导航面板 -->
+  <NavigationPanel
+    :visible="showNavigationPanel"
+    :origin="userLocation"
+    :destination="navigationDestination"
+    @close="handleCloseNavigation"
+    @navigate="handleConfirmNavigate"
+    @routePlanned="handleRoutePlanned"
+  />
 </template>
 
 <script setup>
@@ -181,6 +191,7 @@ import { useRouter } from 'vue-router'
 import { useStationStore } from '@/stores/station'
 import { useAppStore } from '@/stores/app'
 import amapService from '@/services/amap'
+import NavigationPanel from './NavigationPanel.vue'
 
 const props = defineProps({
   visible: {
@@ -193,7 +204,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['close', 'navigate', 'charge'])
+const emit = defineEmits(['close', 'navigate', 'charge', 'routePlanned'])
 
 const router = useRouter()
 const stationStore = useStationStore()
@@ -203,6 +214,9 @@ const isExpanded = ref(false)
 const detailLoading = ref(false)
 const stationDetail = ref(null)
 const selectedCharger = ref(null)
+const showNavigationPanel = ref(false)
+const navigationDestination = ref(null)
+const userLocation = computed(() => stationStore.userLocation)
 
 const statusText = computed(() => {
   const status = props.station?.status
@@ -297,14 +311,44 @@ function handleClose() {
 function handleNavigate() {
   if (!props.station) return
   
-  // 唤起高德地图APP导航
-  amapService.openAmapApp({
+  // 检查用户位置
+  if (!stationStore.userLocation) {
+    appStore.showToast('无法获取当前位置', 'warning')
+    return
+  }
+  
+  // 设置导航目的地并显示导航面板
+  navigationDestination.value = {
     lat: props.station.lat,
     lng: props.station.lng,
-    name: props.station.name
+    name: props.station.name,
+    address: props.station.address
+  }
+  
+  showNavigationPanel.value = true
+}
+
+function handleCloseNavigation() {
+  showNavigationPanel.value = false
+  setTimeout(() => {
+    navigationDestination.value = null
+  }, 300)
+}
+
+function handleConfirmNavigate(data) {
+  emit('navigate', {
+    station: props.station,
+    route: data.route
   })
   
-  emit('navigate', props.station)
+  appStore.showToast('正在启动导航...', 'success')
+  
+  // 关闭导航面板
+  handleCloseNavigation()
+}
+
+function handleRoutePlanned(route) {
+  emit('routePlanned', route)
 }
 
 function handleCharge() {
